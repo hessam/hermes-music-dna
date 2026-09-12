@@ -1,0 +1,13 @@
+{
+  "total_singers": 12,
+  "same_singer_pairs": 36,
+  "different_singer_pairs": 594,
+  "same_singer_similarity_mean": 0.1064,
+  "same_singer_similarity_std": 0.0625,
+  "different_singer_similarity_mean": 0.0018,
+  "different_singer_similarity_std": 0.0734,
+  "d_prime_separation": 1.536,
+  "equal_error_rate_eer": 0.2462,
+  "optimal_threshold": 0.0549,
+  "verification_confidence_grade": "B"
+}

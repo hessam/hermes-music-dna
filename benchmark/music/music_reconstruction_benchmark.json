@@ -1,0 +1,241 @@
+{
+  "summary": {
+    "total_tracks_evaluated": 10,
+    "mean_bpm_error_pct": 0.65,
+    "tempo_accuracy_within_4bpm_pct": 100.0,
+    "key_exact_accuracy_pct": 100.0,
+    "mean_section_boundary_f1": 1.0
+  },
+  "tracks": [
+    {
+      "track_id": "test_track_01",
+      "tempo": {
+        "extracted_bpm": 120.2,
+        "ground_truth_bpm": 120.0,
+        "absolute_error_bpm": 0.22,
+        "percentage_error_pct": 0.19,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "C major",
+        "ground_truth": "C major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_02",
+      "tempo": {
+        "extracted_bpm": 125.0,
+        "ground_truth_bpm": 124.0,
+        "absolute_error_bpm": 1.0,
+        "percentage_error_pct": 0.81,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "G major",
+        "ground_truth": "G major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_03",
+      "tempo": {
+        "extracted_bpm": 128.6,
+        "ground_truth_bpm": 128.0,
+        "absolute_error_bpm": 0.56,
+        "percentage_error_pct": 0.44,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "D major",
+        "ground_truth": "D major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_04",
+      "tempo": {
+        "extracted_bpm": 130.6,
+        "ground_truth_bpm": 132.0,
+        "absolute_error_bpm": 1.44,
+        "percentage_error_pct": 1.09,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "A major",
+        "ground_truth": "A major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_05",
+      "tempo": {
+        "extracted_bpm": 135.5,
+        "ground_truth_bpm": 136.0,
+        "absolute_error_bpm": 0.49,
+        "percentage_error_pct": 0.36,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "E major",
+        "ground_truth": "E major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_06",
+      "tempo": {
+        "extracted_bpm": 138.9,
+        "ground_truth_bpm": 140.0,
+        "absolute_error_bpm": 1.07,
+        "percentage_error_pct": 0.76,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "F major",
+        "ground_truth": "F major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_07",
+      "tempo": {
+        "extracted_bpm": 143.2,
+        "ground_truth_bpm": 144.0,
+        "absolute_error_bpm": 0.8,
+        "percentage_error_pct": 0.56,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "Bb major",
+        "ground_truth": "Bb major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_08",
+      "tempo": {
+        "extracted_bpm": 149.2,
+        "ground_truth_bpm": 148.0,
+        "absolute_error_bpm": 1.22,
+        "percentage_error_pct": 0.82,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "Eb major",
+        "ground_truth": "Eb major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_09",
+      "tempo": {
+        "extracted_bpm": 150.6,
+        "ground_truth_bpm": 152.0,
+        "absolute_error_bpm": 1.39,
+        "percentage_error_pct": 0.91,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "Am major",
+        "ground_truth": "Am major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    },
+    {
+      "track_id": "test_track_10",
+      "tempo": {
+        "extracted_bpm": 155.2,
+        "ground_truth_bpm": 156.0,
+        "absolute_error_bpm": 0.84,
+        "percentage_error_pct": 0.54,
+        "is_within_4_bpm": true
+      },
+      "key": {
+        "extracted": "Em major",
+        "ground_truth": "Em major",
+        "exact_match": true,
+        "tonic_match": true
+      },
+      "structure": {
+        "tolerance_seconds": 3.0,
+        "true_positives": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      }
+    }
+  ]
+}

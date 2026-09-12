@@ -1,0 +1,44 @@
+# Secrets & Environment
+.env
+.env.*
+!.env.example
+secret.env
+*.key
+*.pem
+id_ed25519*
+
+# Databases & Runtime State
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+state/
+kanban.db*
+response_store.db*
+
+# Python & Dependencies
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Logs & Cache
+*.log
+logs/
+cache/
+audio_cache/
+image_cache/
+.DS_Store
+
+# Large checkpoints / model weights / raw media
+*.ckpt
+*.pt
+*.bin
+*.onnx
+*.mp4
+*.mp3
+*.wav
+viral_inputs/
+viral_outputs/
