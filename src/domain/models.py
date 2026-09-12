@@ -112,6 +112,8 @@ class VocalMeasurements:
     shimmer_local_pct: float                        # Cycle-to-cycle amplitude perturbation (%)
     subharmonic_energy_ratio: float                 # Period-doubling energy ratio (F0/2, 3F0/2 vs F0)
     detected_registers: List[str]                   # Discovered acoustic registers
+    formants_hz: Optional[Dict[str, float]] = None  # F1, F2, F3, F4 medians in Hz
+    hnr_db: Optional[float] = None                  # Mean Harmonics-to-Noise Ratio (dB)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -130,6 +132,8 @@ class VocalMeasurements:
             "shimmer_local_pct": round(self.shimmer_local_pct, 3),
             "subharmonic_energy_ratio": round(self.subharmonic_energy_ratio, 4),
             "detected_registers": self.detected_registers,
+            "formants_hz": {k: round(v, 1) for k, v in self.formants_hz.items()} if self.formants_hz else None,
+            "hnr_db": round(self.hnr_db, 2) if self.hnr_db is not None else None,
         }
 
 

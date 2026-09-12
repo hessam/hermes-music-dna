@@ -1,4 +1,4 @@
-"""Vocal Identity Gate: Evaluates Broadway front-load, explicit gender/register, and core anchors."""
+"""Validate textual prompt constraints; this is not acoustic speaker verification."""
 from __future__ import annotations
 import logging
 from typing import Dict, Any, List, Optional
@@ -30,7 +30,7 @@ class IdentityGateResult:
 
 
 class VocalIdentityGate:
-    """Validates that Broadway override is #1 and explicit gender/register is front-loaded."""
+    """Validate requested genre, explicit voice register and the style budget."""
 
     @classmethod
     def evaluate(
@@ -44,28 +44,28 @@ class VocalIdentityGate:
         anchors: List[IdentityAnchorEvaluation] = []
         penalties = 0
 
-        # Anchor 1: Broadway Override at #1
-        has_broadway_start = style_lower.startswith("broadway")
-        if not has_broadway_start:
+        # Preserve the requested song world independently of singer identity.
+        has_genre = interpretation.hard_constraints.genre.casefold() in style_lower
+        if not has_genre:
             penalties += 30
             anchors.append(IdentityAnchorEvaluation(
-                anchor_name="Broadway Global Override",
+                anchor_name="Requested genre",
                 passed=False,
                 score=0,
-                observed_trait="Broadway is not at the start of Style Box.",
-                feedback="Place 'Broadway' at the very beginning of the Style prompt.",
+                observed_trait="Requested genre missing from Style Box.",
+                feedback="Restore the requested genre without replacing it with a global style.",
             ))
         else:
             anchors.append(IdentityAnchorEvaluation(
-                anchor_name="Broadway Global Override",
+                anchor_name="Requested genre",
                 passed=True,
                 score=100,
-                observed_trait="Broadway front-loaded at token #1.",
-                feedback="Global clarity override active.",
+                observed_trait="Requested genre retained.",
+                feedback="Song world preserved.",
             ))
 
         # Anchor 2: Explicit Gender & Register in First 20 Words
-        has_explicit_gender = bible.gender in style_lower[:60]
+        has_explicit_gender = f"{bible.gender} {bible.identity_card.vocal_register}" in style_lower[:100]
         if not has_explicit_gender:
             penalties += 25
             anchors.append(IdentityAnchorEvaluation(
@@ -86,32 +86,32 @@ class VocalIdentityGate:
 
         # Anchor 3: 4-7 Sweet Spot Length
         tokens = [t.strip() for t in style_prompt.split(",") if t.strip()]
-        is_sweet_spot = (4 <= len(tokens) <= 9)
+        is_sweet_spot = bool(style_prompt.strip()) and len(style_prompt) <= 1000
         if not is_sweet_spot:
             penalties += 15
             anchors.append(IdentityAnchorEvaluation(
-                anchor_name="4-7 Descriptor Sweet Spot",
+                anchor_name="Style box budget",
                 passed=False,
                 score=50,
-                observed_trait=f"Token count ({len(tokens)}) out of optimal range.",
-                feedback="Keep descriptors within 4-7 sweet spot.",
+                observed_trait=f"Style length ({len(style_prompt)}) exceeds its budget or is empty.",
+                feedback="Keep the style box within 1000 characters.",
             ))
         else:
             anchors.append(IdentityAnchorEvaluation(
-                anchor_name="4-7 Descriptor Sweet Spot",
+                anchor_name="Style box budget",
                 passed=True,
                 score=100,
-                observed_trait=f"Optimal descriptor count ({len(tokens)} tokens).",
-                feedback="High mathematical prompt priority.",
+                observed_trait=f"Style length: {len(style_prompt)} characters.",
+                feedback="Style fits the copyable box.",
             ))
 
         identity_distance = min(100, penalties)
-        passed = (identity_distance <= 30)
+        passed = all(anchor.passed for anchor in anchors)
         repair_needed = not passed
 
         patch = None
         if repair_needed:
-            patch = {"restore": ["Broadway", f"{bible.gender} {bible.identity_card.vocal_register}"]}
+            patch = {"restore": [f"{bible.gender} {bible.identity_card.vocal_register}", interpretation.hard_constraints.genre]}
 
         return IdentityGateResult(
             passed=passed,
@@ -119,7 +119,7 @@ class VocalIdentityGate:
             anchors=anchors,
             repair_needed=repair_needed,
             repair_patch=patch,
-            summary=f"Identity Distance: {identity_distance}/100 ({'PASSED' if passed else 'REPAIRED'})",
+            summary=f"Identity Distance: {identity_distance}/100 ({'PASSED' if passed else 'FAILED'})",
         )
 
     @classmethod
@@ -133,8 +133,9 @@ class VocalIdentityGate:
 
         style = compiled_bundle.get("style_prompt", "")
         tokens = [t.strip() for t in style.split(",") if t.strip()]
-        if not style.lower().startswith("broadway"):
-            tokens.insert(0, "Broadway")
+        for token in reversed((gate_result.repair_patch or {}).get("restore", [])):
+            if token.casefold() not in style.casefold():
+                tokens.insert(0, token)
 
         compiled_bundle["style_prompt"] = ", ".join(tokens) + "."
         return compiled_bundle

@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-"""Compiles Suno AI Prompts adhering strictly to the 4 Laws of Text-Only Vocal Anchoring with Zero Box Clashes."""
-# Suno v5.5 recommended settings — change here to update everywhere
-SUNO_SETTINGS = {
-    "style_influence": "70%",
-    "weirdness_clarity": "40%",
-    "model": "v5.5 Flagship",
-}
-
+"""Compile copyable Suno boxes while preserving song constraints and lyrics."""
 # Suno v5.5 recommended settings — change here to update everywhere
 SUNO_SETTINGS = {
     "style_influence": "70%",
@@ -33,7 +26,7 @@ def sanitize_all_caps_line(line: str) -> str:
 
 
 class SunoPromptBuilder:
-    """Builds Suno AI prompts: Broadway #1 front-load, explicit gender/register, clean non-conflicting section tags, and anti-humming exclusions."""
+    """Builds Suno AI prompts: explicit singer identity, requested song world, and section direction."""
 
     @classmethod
     def build(
@@ -54,7 +47,7 @@ class SunoPromptBuilder:
                     "section_name": s.section_name,
                     "is_instrumental": s.is_instrumental,
                     "vocal_token": s.vocal_token,
-                    "arrangement_token": s.arrangement_token,
+                    "arrangement_token": s.arrangement_token or " + ".join(hc.instruments[:2]),
                     "raw_tag": s.raw_tag,
                     "lyrics_lines": s.lyrics_lines,
                 })
@@ -62,16 +55,23 @@ class SunoPromptBuilder:
         # --- 1. DYNAMIC SECTION-BY-SECTION VOCAL ARC (2-3 word dense tags) ---
         arc_nodes = bible.generate_vocal_arc(p_mode.mode_id, s_mode.mode_id, explicit_sections=sec_dicts)
 
-        # --- 2. STYLE BOX (Broadway #1 + Gender/Register #2 + Core #3 + Instruments + BPM + Vintage Warmth) ---
+        if sec_dicts:
+            for node, section in zip(arc_nodes, interpretation.sections):
+                if section.raw_tag and "|" in section.raw_tag:
+                    node.vocal_tag = f"[{section.raw_tag}]"
+
+        # --- 2. STYLE BOX: singer identity and requested song world ---
         gender_reg = f"{bible.gender} {bible.identity_card.vocal_register}"
         core_token = bible.identity_card.vocal_core
 
-        tokens = ["Broadway", gender_reg, core_token, hc.genre]
-        for inst in hc.instruments[:3]:
+        tokens = [gender_reg, core_token, hc.genre]
+        for inst in hc.instruments:
             if inst and inst not in tokens:
                 tokens.append(inst)
         tokens.append(hc.tempo_bpm)
-        tokens.append("vintage tape warmth")
+        tokens.extend([hc.production, p_mode.vocal_token,
+                       getattr(hc, "diction_descriptor", ""),
+                       getattr(hc, "rhythmic_descriptor", "")])
 
         clean_tokens = []
         for t in tokens:
@@ -95,7 +95,7 @@ class SunoPromptBuilder:
             if not node.is_instrumental:
                 if node.lyrics_lines:
                     for line in node.lyrics_lines:
-                        clean_line = sanitize_all_caps_line(line)
+                        clean_line = line
                         lyrics_lines.append(clean_line)
                 else:
                     pass  # No lyrics provided — leave section tag alone; Suno generates freely
@@ -104,7 +104,16 @@ class SunoPromptBuilder:
         lyrics_box = "\n".join(lyrics_lines).strip()
 
         # --- 4. ADVANCED EXCLUDE PROMPT (Gotcha 3 Fix: Hard Pop Filters + Anti-Intro-Humming String) ---
-        negative_prompt = ", ".join(bible.identity_exclusions)
+        # Arrangement/style exclusions can contradict the requested song world.
+        world = " ".join([hc.genre, hc.production, *hc.instruments, user_raw_query]).casefold()
+        exclusions = []
+        for exclusion in bible.identity_exclusions:
+            if exclusion in {"electronic beat", "pop vocal", "pop soprano"}:
+                continue
+            if exclusion.casefold() in world:
+                continue
+            exclusions.append(exclusion)
+        negative_prompt = ", ".join(exclusions)
 
         raw_bundle = {
             "style_prompt": style_prompt,
@@ -121,6 +130,12 @@ class SunoPromptBuilder:
         gate_result = VocalIdentityGate.evaluate(bible, interpretation, raw_bundle)
         if gate_result.repair_needed:
             raw_bundle = VocalIdentityGate.apply_repair(raw_bundle, gate_result)
+            gate_result = VocalIdentityGate.evaluate(bible, interpretation, raw_bundle)
+
+        if len(raw_bundle["style_prompt"]) > 1000:
+            raise ValueError("Style box exceeds 1000 characters; shorten the supplied descriptors.")
+        if len(raw_bundle["lyrics_box"]) > 4000:
+            raise ValueError("Lyrics box exceeds 4000 characters; split the song into sections. Lyrics were preserved.")
 
         raw_bundle["gate_result"] = gate_result
         return raw_bundle
@@ -156,7 +171,9 @@ class SunoPromptBuilder:
         sections_formatted = "\n".join(sections_text)
         rhythm_label = "9/10 (Syncopated / Off-Beat)" if interp.rhythm_displacement >= 8.0 else f"{interp.rhythm_displacement:.0f}/10"
 
-        gate_badge = f"🛡️ <b>Vocal Identity Gate:</b> <code>Distance {gate.identity_distance}/100 (PASSED)</code>" if gate and gate.passed else "🛡️ <b>Vocal Identity Gate:</b> <code>PASSED</code>"
+        gate_status = "PASSED" if gate and gate.passed else ("FAILED" if gate else "NOT EVALUATED")
+        gate_badge = f"🛡️ <b>Prompt constraint check:</b> <code>{gate_status}</code>"
+
 
         style_chars = len(result["style_prompt"])
         lyrics_chars = len(result["lyrics_box"])
@@ -164,24 +181,24 @@ class SunoPromptBuilder:
         html_text = (
             f"🎙️ <b>{bible.name.upper()} (PRODUCER BLUEPRINT)</b>\n\n"
             f"<b>IMMUTABLE VOCAL CORE (FRONT-LOADED)</b>\n"
-            f"<code>Broadway · {bible.gender} {bible.identity_card.vocal_register} · {bible.identity_card.vocal_core}</code>\n\n"
+            f"<code>{bible.gender} {bible.identity_card.vocal_register} · {bible.identity_card.vocal_core}</code>\n\n"
             f"<b>SONG WORLD</b>\n"
             f"{song_char_text}\n\n"
             f"<b>PERFORMANCE STATE</b>\n"
             f"{html.escape(p_mode.name)} + {html.escape(s_mode.name)}\n"
             f"<code>Power: {interp.power:.0f}/10 | Texture: {interp.texture:.0f}/10 | Intimacy: {interp.intimacy:.0f}/10 | Rhythmic Placement: {rhythm_label}</code>\n"
             f"{gate_badge}\n\n"
-            f"🎛️ <b>RECOMMENDED SUNO v5.5 SETTINGS</b>\n"
+            f"🎛️ <b>SUNO v5.5 STARTING SETTINGS (TUNE BY LISTENING)</b>\n"
             f"• <b>Style Influence:</b> <code>{SUNO_SETTINGS['style_influence']}</code>\n"
             f"• <b>Weirdness / Clarity:</b> <code>{SUNO_SETTINGS['weirdness_clarity']}</code>\n"
             f"• <b>Model:</b> <code>{SUNO_SETTINGS['model']}</code>\n\n"
             f"<b>CONCISE SECTION DIRECTIVES (2-3 WORD DENSE TAGS)</b>\n"
             f"{sections_formatted}\n\n"
-            f"📋 <b>SUNO STYLE PROMPT (BROADWAY #1 OVERRIDE)</b> <i>({style_chars}/1000 chars)</i>\n"
+            f"📋 <b>SUNO STYLE PROMPT</b> <i>({style_chars}/1000 chars)</i>\n"
             f"<pre><code>{s_prompt}</code></pre>\n\n"
             f"📝 <b>SUNO LYRICS / META BOX (ZERO CLASH)</b> <i>({lyrics_chars}/4000 chars)</i>\n"
             f"<pre><code>{l_box}</code></pre>\n\n"
-            f"🚫 <b>ADVANCED EXCLUDE PROMPT (ANTI-HUMMING + POP FILTER)</b>\n"
+            f"🚫 <b>EXCLUDE PROMPT</b>\n"
             f"<pre><code>{neg_p}</code></pre>"
         )
         return html_text

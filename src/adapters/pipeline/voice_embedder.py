@@ -10,6 +10,7 @@ import soundfile as sf
 import torch
 from music_dna_agent.src.domain.models import Job, StepName, VocalIdentity
 from music_dna_agent.src.domain.ports import PipelineStepPort
+from music_dna_agent.src.adapters.pipeline.analysis_export import write_vocal_analysis
 
 
 class VoiceEmbedder(PipelineStepPort):
@@ -38,6 +39,7 @@ class VoiceEmbedder(PipelineStepPort):
 
         # 2. Extract ECAPA-TDNN Embeddings per Segment
         embeddings_list = []
+        embedded_paths = []
         model_name = "speechbrain/spkrec-ecapa-voxceleb"
         classifier = None
 
@@ -55,25 +57,30 @@ class VoiceEmbedder(PipelineStepPort):
                     continue
                 if classifier is not None:
                     wav_tensor = torch.tensor(y_seg).unsqueeze(0)
-                    emb = classifier.encode_batch(wav_tensor).squeeze().cpu().numpy()
+                    with torch.inference_mode():
+                        emb = classifier.encode_batch(wav_tensor).squeeze().cpu().numpy()
                     norm_val = np.linalg.norm(emb)
-                    if norm_val > 0:
+                    if np.isfinite(emb).all() and norm_val > 0:
                         embeddings_list.append(emb / norm_val)
+                        embedded_paths.append(seg_path)
                 else:
                     mel = librosa.feature.melspectrogram(y=y_seg, sr=sr_seg, n_mels=192)
                     mel_mean = np.mean(mel, axis=1)
                     norm_val = np.linalg.norm(mel_mean) + 1e-8
                     embeddings_list.append(mel_mean / norm_val)
+                    embedded_paths.append(seg_path)
             except Exception:
                 continue
 
         if not embeddings_list:
             # Fallback
+            model_name = "spectral-mel-192d"
             y_fb, sr_fb = librosa.load(clean_ref_path if os.path.exists(clean_ref_path) else job.input_file_path, sr=16000, duration=20.0)
             mel = librosa.feature.melspectrogram(y=y_fb, sr=sr_fb, n_mels=192)
             mel_mean = np.mean(mel, axis=1)
             norm_val = np.linalg.norm(mel_mean) + 1e-8
             embeddings_list = [mel_mean / norm_val]
+            embedded_paths = [clean_ref_path if os.path.exists(clean_ref_path) else job.input_file_path]
 
         # 3. Compute Centroid Vector & Pairwise Cosine Consistency
         emb_arr = np.array(embeddings_list)
@@ -106,7 +113,10 @@ class VoiceEmbedder(PipelineStepPort):
             "p75": [float(x) for x in np.percentile(mfcc_stack, 75, axis=1)],
         }
 
-        signal_reliability = float(max(0.2, min(1.0, mean_cosine)))
+        # A single segment or a spectral fallback cannot establish speaker identity.
+        signal_reliability = (float(max(0.0, min(1.0, mean_cosine)))
+                              if classifier is not None and model_name != "spectral-mel-192d"
+                              and len(embeddings_list) > 1 else 0.0)
 
         identity = VocalIdentity(
             speaker_identity_embedding=[float(x) for x in centroid],
@@ -126,6 +136,21 @@ class VoiceEmbedder(PipelineStepPort):
         embed_json_path = os.path.join(analysis_dir, "voice_embedding.json")
 
         with open(embed_json_path, "w", encoding="utf-8") as f:
-            json.dump(identity.to_dict(), f, indent=2)
+            json.dump(identity.to_dict(), f, indent=2, allow_nan=False)
+
+        if job.dna and job.dna.vocal_dna:
+            write_vocal_analysis(job, analysis_dir, raw_identity={
+                "embedding_model": model_name,
+                "learned_speaker_embedding": model_name != "spectral-mel-192d",
+                "verification_status": "not_evaluated_against_voice_vault",
+                "sample_rate_hz": 16000,
+                "segment_paths": embedded_paths,
+                "segment_embeddings": [embedding.tolist() for embedding in embeddings_list],
+                "centroid_embedding": centroid.tolist(),
+                "pairwise_cosines": pairwise_cosines,
+                "mfcc_trajectory_stats": mfcc_stats,
+                "mfcc_frame_times_s": (np.arange(mfcc_stack.shape[1]) * 512 / sr_ref).tolist(),
+                "mfcc_trajectory": mfcc_stack.tolist(),
+            })
 
         return embed_json_path

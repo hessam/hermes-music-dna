@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from typing import Optional
 import pretty_midi
 import soundfile as sf
@@ -30,9 +31,6 @@ class FluidSynthRenderer(PipelineStepPort):
         midi_dir = os.path.join(workspace_dir, "midi")
         os.makedirs(synth_dir, exist_ok=True)
 
-        bpm = job.dna.bpm if (job.dna and job.dna.bpm > 30) else 120.0
-        duration = 35.0 if job.quality.value == "crisp_30s" else 65.0
-
         vocals_mid = os.path.join(midi_dir, "vocals.mid")
         other_mid = os.path.join(midi_dir, "other.mid")
         bass_mid = os.path.join(midi_dir, "bass.mid")
@@ -42,41 +40,57 @@ class FluidSynthRenderer(PipelineStepPort):
         # 1. Lead Line (Vocals MIDI or Highest Melody line from Other)
         lead_mid_path = os.path.join(synth_dir, "lead.mid")
         lead_wav_path = os.path.join(synth_dir, "lead.wav")
-        if os.path.exists(vocals_mid) and os.path.getsize(vocals_mid) > 500:
-            self._format_instrument(vocals_mid, lead_mid_path, program=81)  # Lead 2 (sawtooth)
+        has_vocal_melody = self._has_notes(vocals_mid)
+        if has_vocal_melody:
+            self._format_instrument(vocals_mid, lead_mid_path, program=0)
             tasks.append(self._render_fluidsynth(lead_mid_path, lead_wav_path))
-        elif os.path.exists(other_mid) and os.path.getsize(other_mid) > 500:
-            # Extract lead from other
-            self._format_instrument(other_mid, lead_mid_path, program=80)  # Lead 1 (square)
+        elif self._has_notes(other_mid):
+            self._format_instrument(other_mid, lead_mid_path, program=0)
             tasks.append(self._render_fluidsynth(lead_mid_path, lead_wav_path))
+        else:
+            raise RuntimeError("No playable melodic MIDI notes were extracted.")
 
         # 2. Chords & Atmosphere (Piano / Warm Pad from Other MIDI)
         chords_mid_path = os.path.join(synth_dir, "chords.mid")
         chords_wav_path = os.path.join(synth_dir, "chords.wav")
-        if os.path.exists(other_mid) and os.path.getsize(other_mid) > 500:
+        if has_vocal_melody and self._has_notes(other_mid):
             self._format_instrument(other_mid, chords_mid_path, program=0)  # Acoustic Grand Piano
             tasks.append(self._render_fluidsynth(chords_mid_path, chords_wav_path))
 
         # 3. Bassline (Synth Bass from Bass MIDI)
         bass_mid_path = os.path.join(synth_dir, "bass.mid")
         bass_wav_path = os.path.join(synth_dir, "bass.wav")
-        if os.path.exists(bass_mid) and os.path.getsize(bass_mid) > 500:
+        if self._has_notes(bass_mid):
             self._format_instrument(bass_mid, bass_mid_path, program=38)  # Synth Bass 1
             tasks.append(self._render_fluidsynth(bass_mid_path, bass_wav_path))
 
-        # 4. Clean Click / Drum Grid on micro-timing BPM
-        drums_mid_path = os.path.join(synth_dir, "drums.mid")
-        drums_wav_path = os.path.join(synth_dir, "drums.wav")
-        self._build_clean_drum_grid(bpm, duration, drums_mid_path)
-        tasks.append(self._render_fluidsynth(drums_mid_path, drums_wav_path))
+        # A synthetic fixed beat grid does not represent the source's rhythm.
 
         if tasks:
             await asyncio.gather(*tasks)
 
+        if os.path.isfile(lead_wav_path):
+            guide_dir = os.path.join(workspace_dir, "guide")
+            os.makedirs(guide_dir, exist_ok=True)
+            melody_path = os.path.join(guide_dir, "melody_guide.wav")
+            shutil.copy2(lead_wav_path, melody_path)
+            job.output_manifest["melody_guide"] = melody_path
+            job.output_manifest["melody_midi"] = lead_mid_path
+
         return synth_dir
+
+    @staticmethod
+    def _has_notes(midi_path: str) -> bool:
+        if not os.path.isfile(midi_path):
+            return False
+        pm = pretty_midi.PrettyMIDI(midi_path)
+        return any(note.end > note.start and note.velocity > 0
+                   for instrument in pm.instruments if not instrument.is_drum
+                   for note in instrument.notes)
 
     def _format_instrument(self, src_midi: str, dst_midi: str, program: int) -> None:
         pm = pretty_midi.PrettyMIDI(src_midi)
+        pm.instruments = [inst for inst in pm.instruments if not inst.is_drum]
         for inst in pm.instruments:
             inst.is_drum = False
             inst.program = program
@@ -116,7 +130,7 @@ class FluidSynthRenderer(PipelineStepPort):
                 "-ni",
                 "-F", wav_path,
                 "-r", "44100",
-                "-g", "1.2",
+                "-g", "0.5",
                 SOUNDFONT_PATH,
                 midi_path,
             ]
@@ -124,10 +138,13 @@ class FluidSynthRenderer(PipelineStepPort):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             await proc.communicate()
-            if os.path.exists(wav_path) and os.path.getsize(wav_path) > 2000:
+            if proc.returncode == 0 and os.path.exists(wav_path) and os.path.getsize(wav_path) > 44:
                 return
+            raise RuntimeError("FluidSynth failed to render the melodic guide.")
 
         # Fallback pure synth
         pm = pretty_midi.PrettyMIDI(midi_path)
         audio_data = pm.synthesize(fs=44100)
+        if len(audio_data) == 0:
+            raise RuntimeError("MIDI synthesis produced an empty guide.")
         sf.write(wav_path, audio_data, 44100)

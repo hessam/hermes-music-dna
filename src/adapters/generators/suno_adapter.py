@@ -72,6 +72,89 @@ class AcousticInterpreter:
             }
 
     # -----------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Praat Formants & Harmonicity Interpretation (1:1 Text-Only Voice Match)
+    # -----------------------------------------------------------------------
+    @classmethod
+    def _classify_formants(cls, formants: Optional[Dict[str, float]], f0_median: float) -> Dict[str, str]:
+        """Map Praat Burg Formants (F1-F4) into Suno vocal resonance tokens."""
+        if not formants:
+            return {
+                "ring_token": "natural vocal resonance",
+                "tract_desc": "balanced natural vocal tract resonance",
+            }
+
+        f1 = formants.get("f1", 600.0)
+        f2 = formants.get("f2", 1500.0)
+        f3 = formants.get("f3", 2800.0)
+
+        # Singer's Formant / Ring (F3 cluster 2.6 - 3.4 kHz)
+        is_female = f0_median > 175.0
+        singers_formant_range = (2800.0, 3600.0) if is_female else (2500.0, 3300.0)
+        has_singers_formant = singers_formant_range[0] <= f3 <= singers_formant_range[1]
+
+        # Pharyngeal Twang vs Cavernous Throat (F2)
+        twang_threshold = 2100.0 if is_female else 1750.0
+        dark_threshold = 1400.0 if is_female else 1250.0
+
+        if f2 > twang_threshold:
+            tract_shape = "forward pharyngeal twang"
+        elif f2 < dark_threshold:
+            tract_shape = "dark cavernous chest resonance"
+        else:
+            tract_shape = "centered vocal tract resonance"
+
+        # Jaw Drop / Belting (F1)
+        if f1 > 700.0:
+            jaw_desc = "open-throat belting acoustics"
+        elif f1 < 450.0:
+            jaw_desc = "covered intimate acoustics"
+        else:
+            jaw_desc = "balanced oral resonance"
+
+        if has_singers_formant:
+            ring_token = "singer's formant ring"
+            tract_desc = f"{tract_shape} with penetrating singer's formant cut and {jaw_desc}"
+        else:
+            ring_token = tract_shape
+            tract_desc = f"{tract_shape} with {jaw_desc}"
+
+        return {
+            "ring_token": ring_token,
+            "tract_desc": tract_desc,
+        }
+
+    @classmethod
+    def _classify_hnr(cls, hnr_db: Optional[float], is_pressed: bool) -> Dict[str, str]:
+        """Map Praat Harmonics-to-Noise Ratio (dB) into Suno phonation tokens."""
+        if hnr_db is None:
+            return {"hnr_token": "", "hnr_desc": "natural harmonic balance"}
+
+        if hnr_db < 6.0:
+            if is_pressed:
+                return {
+                    "hnr_token": "raspy gravel distortion",
+                    "hnr_desc": f"heavy subharmonic breakup and raspy overdrive ({hnr_db:.1f} dB HNR)",
+                }
+            return {
+                "hnr_token": "husky breathy texture",
+                "hnr_desc": f"pronounced airy breath turbulence and smoky edge ({hnr_db:.1f} dB HNR)",
+            }
+        elif hnr_db < 12.0:
+            return {
+                "hnr_token": "textured breath air",
+                "hnr_desc": f"organic breath air with textured harmonic presence ({hnr_db:.1f} dB HNR)",
+            }
+        elif hnr_db > 18.0:
+            return {
+                "hnr_token": "crystal harmonic clarity",
+                "hnr_desc": f"pure bell-like harmonic clarity with zero breath noise ({hnr_db:.1f} dB HNR)",
+            }
+        return {
+            "hnr_token": "clean harmonic balance",
+            "hnr_desc": f"even modal harmonic resonance ({hnr_db:.1f} dB HNR)",
+        }
+
     # Phonation & Timbre (the critical path for accuracy)
     # -----------------------------------------------------------------------
     @classmethod
@@ -210,6 +293,13 @@ class AcousticInterpreter:
             phon["is_pressed"],
             phon["has_grit"],
         )
+        formant_info = cls._classify_formants(m.formants_hz, f0_median)
+        hnr_info = cls._classify_hnr(m.hnr_db, phon["is_pressed"])
+
+        # Fuse Praat HNR clarity/rasp into timbre tags if relevant
+        timbre_tags = phon["timbre_tags"]
+        if hnr_info["hnr_token"] and hnr_info["hnr_token"] not in timbre_tags:
+            timbre_tags = f"{timbre_tags}, {hnr_info['hnr_token']}"
 
         return {
             # Register
@@ -217,14 +307,19 @@ class AcousticInterpreter:
             "vocal_range": reg_info["vocal_range"],
             "character": reg_info["character"],
             "pitch_note": reg_info["pitch_note"],
-            # Phonation
+            # Phonation & HNR
             "phonation": phon["phonation"],
-            "timbre_tags": phon["timbre_tags"],
+            "timbre_tags": timbre_tags,
             "texture": phon["texture"],
             "grit_token": phon["grit_token"],
             "has_fry": phon["has_fry"],
             "has_grit": phon["has_grit"],
             "is_pressed": phon["is_pressed"],
+            "hnr_token": hnr_info["hnr_token"],
+            "hnr_desc": hnr_info["hnr_desc"],
+            # Formants & Resonance
+            "formant_ring": formant_info["ring_token"],
+            "vocal_tract_desc": formant_info["tract_desc"],
             # Space
             "space_tag": space,
             # Vibrato
@@ -260,31 +355,11 @@ class SunoAdapter:
         key_str = f"{dna.key} {dna.scale.capitalize()}"
         chords_str = " - ".join(dna.chord_progression[:4]) if dna.chord_progression else ""
 
-        # --- Style Box (max 7 tokens, left-to-right priority) ---
-        # Token 1: Genre/Era/Energy
-        if dna.bpm > 130:
-            energy = "driving hard rock"
-        elif dna.bpm > 110:
-            energy = "energetic rock"
-        elif dna.bpm < 70:
-            energy = "slow heartfelt ballad"
-        elif dna.bpm < 85:
-            energy = "downtempo groove"
-        else:
-            energy = "midtempo rock"
-
-        # Token 2: Key + BPM anchor
+        # Tempo and loudness do not identify genre, instrumentation or recording gear.
+        energy = "follow the reference arrangement"
         tempo_key = f"{key_str}, {bpm} BPM"
-
-        # Token 3: Chord color
-        chord_token = chords_str if chords_str else ""
-
-        # Token 4-5: Production character (2 tokens max, chosen by mix data)
-        production_tokens = []
-        if dna.lufs_integrated and dna.lufs_integrated < -16:
-            production_tokens.append("wide dynamic range")
-        else:
-            production_tokens.append("punchy analog production")
+        chord_token = chords_str
+        production_tokens = ["preserve reference dynamics and ambience"]
 
         style_elements = [energy, tempo_key]
         if chord_token:
@@ -307,30 +382,34 @@ class SunoAdapter:
             has_fry = interp["has_fry"]
             is_pressed = interp["is_pressed"]
 
-            # Triple-Stack: Character | Delivery | Texture
-            # (NO Hz values — only Suno-parseable descriptors)
-            vocal_compact_tags.append(interp["voice_type"].lower())  # Slot 5
-            vocal_compact_tags.append(interp["delivery"])            # Slot 6
-            vocal_compact_tags.append(interp["timbre_tags"])         # Slot 7
+            # Triple-Stack: Character | Delivery + Resonance | Texture + Harmonic Purity
+            # (NO raw Hz notation in Style box — highest-fidelity Suno prompt tokens)
+            vocal_compact_tags.append(f"lead {interp['voice_type'].lower()}")  # Slot 5
+            delivery_slot = f"{interp['delivery']}, {interp['formant_ring']}" if interp["formant_ring"] else interp["delivery"]
+            vocal_compact_tags.append(delivery_slot)                           # Slot 6
+            vocal_compact_tags.append(interp["timbre_tags"])                   # Slot 7
 
             # Short Vocal Chain header (pipe syntax, ≤3 words per segment)
             chain_parts = [
                 f"lead {interp['voice_type'].lower()}",
                 interp["delivery"],
-                interp["grit_token"] or interp["timbre_tags"].split(",")[0].strip(),
+                interp["formant_ring"],
                 interp["vibrato_tag"],
                 interp["space_tag"],
             ]
-            vocal_chain_header = "[" + " | ".join(chain_parts) + "]"
+            # Deduplicate and keep concise
+            clean_chain = [p for p in chain_parts if p]
+            vocal_chain_header = "[" + " | ".join(clean_chain) + "]"
 
             # Detailed Persona Description (human-readable paragraph, not in Style box)
             detailed_persona_text = (
                 f"{vocal_chain_header}\n\n"
                 f"A lead {interp['voice_type'].lower()} singer. "
-                f"{interp['character'].capitalize()}. "
-                f"Phonation: {interp['phonation']}, featuring {interp['texture']}. "
-                f"Placement: {interp['space_tag']}. "
-                f"Phrasing: {interp['vibrato']}, with {interp['delivery']}."
+                f"{interp['character'].capitalize()}.\n"
+                f"- Phonation & Harmonicity: {interp['phonation']}, featuring {interp['texture']}. {interp['hnr_desc'][0].upper() + interp['hnr_desc'][1:] if interp['hnr_desc'] else ''}.\n"
+                f"- Resonance & Vocal Tract: {interp['vocal_tract_desc'].capitalize()}.\n"
+                f"- Mic & Spatial Placement: {interp['space_tag'].capitalize()}.\n"
+                f"- Phrasing & Delivery: {interp['vibrato'].capitalize()}, with {interp['delivery']}."
             )
 
             # Section tags: ≤3 words, pipe separator, no backslash

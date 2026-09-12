@@ -89,22 +89,24 @@ async def main() -> None:
                     await send_chunked_message(bot, processed_job.chat_id, summary_md)
 
                     # 2. Send Clean Vocal Reference Audio
-                    clean_ref_path = os.path.join(voice_dir, "clean_vocal_reference.wav")
+                    clean_ref_path = processed_job.output_manifest.get(
+                        "isolated_vocals", os.path.join(voice_dir, "clean_vocal_reference.wav"))
                     if os.path.exists(clean_ref_path):
                         vocal_audio = FSInputFile(clean_ref_path, filename=f"CleanVocal_{processed_job.original_filename}.wav")
                         await bot.send_audio(
                             chat_id=processed_job.chat_id,
                             audio=vocal_audio,
-                            caption=f"🎙️ Clean Vocal Acapella Reference (Upload to Suno Audio Input)",
+                            caption="🎙️ Separated vocal stem — original separator output, without added vocal effects.",
                         )
 
                     # 3. Send Guide Track (if synthesized)
-                    if processed_job.guide_track_path and os.path.exists(processed_job.guide_track_path):
-                        audio_file = FSInputFile(processed_job.guide_track_path, filename=f"GuideTrack_{processed_job.original_filename}.wav")
+                    melody_path = processed_job.output_manifest.get("melody_guide", processed_job.guide_track_path)
+                    if melody_path and os.path.exists(melody_path):
+                        audio_file = FSInputFile(melody_path, filename=f"GuideTrack_{processed_job.original_filename}.wav")
                         await bot.send_audio(
                             chat_id=processed_job.chat_id,
                             audio=audio_file,
-                            caption=f"🎹 Pure Synthesized Guide Track ({processed_job.original_filename})",
+                            caption=f"🎹 Melody guide from extracted notes ({processed_job.original_filename})",
                         )
 
                     # 4. Send Analysis JSON Document

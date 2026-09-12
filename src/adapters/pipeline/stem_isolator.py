@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import logging
 import subprocess
 from pathlib import Path
 from typing import Dict
@@ -43,6 +44,8 @@ class DemucsStemIsolator(PipelineStepPort):
             *trim_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await proc.communicate()
+        if proc.returncode != 0 or not os.path.isfile(trimmed_input):
+            raise RuntimeError("Audio trim failed; separation cannot proceed.")
 
         target_audio = trimmed_input if os.path.exists(trimmed_input) else input_audio
 
@@ -58,17 +61,19 @@ class DemucsStemIsolator(PipelineStepPort):
             for out_file in outputs:
                 full_path = os.path.join(stems_dir, out_file)
                 lower_name = out_file.lower()
-                if "vocal" in lower_name:
-                    shutil.copy2(full_path, os.path.join(stems_dir, "vocals.wav"))
-                elif "instrument" in lower_name or "other" in lower_name:
-                    shutil.copy2(full_path, os.path.join(stems_dir, "instrumental.wav"))
-                    shutil.copy2(full_path, os.path.join(stems_dir, "other.wav"))
-            
-            if os.path.exists(os.path.join(stems_dir, "vocals.wav")):
-                roformer_success = True
+                if "instrument" in lower_name or "other" in lower_name or "no_vocal" in lower_name:
+                    for name in ("instrumental.wav", "other.wav"):
+                        destination = os.path.join(stems_dir, name)
+                        if os.path.abspath(full_path) != os.path.abspath(destination):
+                            shutil.copy2(full_path, destination)
+                elif "vocal" in lower_name:
+                    destination = os.path.join(stems_dir, "vocals.wav")
+                    if os.path.abspath(full_path) != os.path.abspath(destination):
+                        shutil.copy2(full_path, destination)
+                    roformer_success = os.path.getsize(destination) > 44
         except Exception as e:
             # Graceful fallback to Demucs if RoFormer encounters runtime issue
-            pass
+            logging.getLogger(__name__).warning("RoFormer separation unavailable: %s", e)
 
         # 2. Demucs execution (either for 4-stem breakdown or if RoFormer was bypassed)
         if not roformer_success or not os.path.exists(os.path.join(stems_dir, "drums.wav")):
@@ -85,13 +90,11 @@ class DemucsStemIsolator(PipelineStepPort):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError("Demucs separation failed; required stems are unavailable.")
 
             track_basename = Path(target_audio).stem
             demucs_out_dir = os.path.join(stems_dir, "htdemucs", track_basename)
-            if not os.path.isdir(demucs_out_dir):
-                candidates = list(Path(stems_dir).rglob("vocals.wav"))
-                if candidates:
-                    demucs_out_dir = str(candidates[0].parent)
 
             if os.path.isdir(demucs_out_dir):
                 for stem_name in ["vocals", "bass", "drums", "other"]:
@@ -101,4 +104,10 @@ class DemucsStemIsolator(PipelineStepPort):
                     if os.path.exists(src) and (stem_name != "vocals" or not roformer_success):
                         shutil.copy2(src, dest)
 
+        required = ("vocals", "bass", "drums", "other")
+        missing = [name for name in required
+                   if not os.path.isfile(os.path.join(stems_dir, f"{name}.wav"))
+                   or os.path.getsize(os.path.join(stems_dir, f"{name}.wav")) <= 44]
+        if missing:
+            raise RuntimeError(f"Separation produced missing or empty stems: {', '.join(missing)}")
         return stems_dir

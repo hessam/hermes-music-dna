@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import aiohttp
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
@@ -97,9 +96,10 @@ THE 4 LAWS OF VOCAL ANCHORING:
    - genre: Decade + specific genre (e.g. "2000s Persian art pop", "1990s dream pop", "1980s new wave")
    - instruments: 3 REAL PHYSICAL instruments that match the song's era, culture, and emotional world
    - tempo_bpm: Exact BPM number matching the song's energy (slow ballad=60-80, mid=90-110, upbeat=120-140)
-   - production: Always "vintage tape warmth" for organic presence
+   - production: Preserve explicitly requested production; otherwise describe a suitable production without imposing an era or tape saturation.
 
 DEDUCTION RULES:
+- Explicit user genre, tempo, instrumentation and production instructions take priority over every deduction below. Do not rewrite supplied lyrics or invent lyrics for a description-only input.
 - If the user provides Persian/Iranian lyrics → deduce a Persian or Middle Eastern influenced genre (e.g. "2000s Persian rock", "contemporary Persian folk", "Iranian art pop")
 - If the user mentions a specific artist or style → match that exact world
 - If no genre is mentioned, read the emotional texture of the lyrics to deduce (dark/intimate → dream pop / art rock; longing → folk/ballad; aggressive → hard rock)
@@ -214,19 +214,24 @@ class InputInterpreter:
             res = await self._call_luna(user_input, force_singer)
             if res:
                 if raw_parsed_sections:
+                    # The input owns section order and lyrics; inference adds direction only.
+                    remaining = list(res.sections)
                     merged_sections = []
-                    for idx, s in enumerate(res.sections):
-                        matched_lyrics = []
-                        for r in raw_parsed_sections:
-                            if r["section_name"].lower() in s.section_name.lower() or s.section_name.lower() in r["section_name"].lower():
-                                matched_lyrics = r["lyrics_lines"]
-                                break
-                        if not matched_lyrics and idx < len(raw_parsed_sections):
-                            matched_lyrics = raw_parsed_sections[idx]["lyrics_lines"]
-
-                        s.lyrics_lines = matched_lyrics
-                        merged_sections.append(s)
+                    for raw in raw_parsed_sections:
+                        matched = next((section for section in remaining
+                                        if section.section_name.casefold() == raw["section_name"].casefold()), None)
+                        if matched is not None:
+                            remaining.remove(matched)
+                        merged_sections.append(SectionConstraint(
+                            section_name=raw["section_name"],
+                            is_instrumental=bool(matched and matched.is_instrumental and not raw["lyrics_lines"]),
+                            vocal_token=matched.vocal_token if matched else None,
+                            arrangement_token=matched.arrangement_token if matched else None,
+                            raw_tag=raw["raw_tag"],
+                            lyrics_lines=raw["lyrics_lines"],
+                        ))
                     res.sections = merged_sections
+                    res.has_explicit_sections = True
 
                 if force_singer:
                     res.singer_slug = force_singer
@@ -240,6 +245,7 @@ class InputInterpreter:
         raise RuntimeError("No response from GPT-5.6 Luna.")
 
     async def _call_luna(self, user_input: str, force_singer: Optional[str] = None) -> Optional[InterpretationResult]:
+        import aiohttp
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -254,7 +260,6 @@ class InputInterpreter:
                 {"role": "user", "content": f"Direct this vocal performance dynamically:{hint}\n\n{user_input}"},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.25,
             "max_tokens": 3500,
         }
 

@@ -27,13 +27,17 @@ class VocalSegmentRanker(PipelineStepPort):
         bass_path = os.path.join(stems_dir, "bass.wav")
 
         if not os.path.exists(vocals_path):
-            vocals_path = job.input_file_path
+            raise FileNotFoundError("Isolated vocals are missing; the mixed input is not a vocal reference.")
 
         voice_dir = os.path.join(workspace_dir, "voice")
         segments_dir = os.path.join(voice_dir, "segments")
         portfolio_dir = os.path.join(voice_dir, "portfolio")
         os.makedirs(segments_dir, exist_ok=True)
         os.makedirs(portfolio_dir, exist_ok=True)
+        # Preserve the separator's waveform independently of shorter analysis clips.
+        isolated_path = os.path.join(voice_dir, "isolated_vocals.wav")
+        shutil.copy2(vocals_path, isolated_path)
+        job.output_manifest["isolated_vocals"] = isolated_path
 
         y_voc, sr = librosa.load(vocals_path, sr=22050)
         total_duration = len(y_voc) / sr
@@ -55,7 +59,7 @@ class VocalSegmentRanker(PipelineStepPort):
         hop_samples = int(hop_sec * sr)
 
         candidates = []
-        num_windows = max(1, int((len(y_voc) - window_samples) / hop_samples)) if len(y_voc) > window_samples else 1
+        num_windows = max(1, (len(y_voc) - window_samples) // hop_samples + 1)
 
         for i in range(num_windows):
             start_samp = i * hop_samples
@@ -121,12 +125,13 @@ class VocalSegmentRanker(PipelineStepPort):
                 "-ss", str(seg["start_s"]),
                 "-to", str(seg["end_s"]),
                 "-i", vocals_path,
-                "-af", "highpass=f=75,dynaudnorm=f=100:g=15:p=0.95",
-                "-ar", "44100", "-ac", "2",
+                "-c:a", "pcm_s24le",
                 seg_path
             ]
             proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError("Vocal reference extraction failed.")
             if os.path.exists(seg_path):
                 saved_segment_paths.append(seg_path)
                 seg["file_path"] = seg_path
@@ -140,12 +145,13 @@ class VocalSegmentRanker(PipelineStepPort):
                 "ffmpeg", "-y",
                 "-i", vocals_path,
                 "-t", "30",
-                "-af", "highpass=f=75,dynaudnorm=f=100:g=15:p=0.95",
-                "-ar", "44100", "-ac", "2",
+                "-c:a", "pcm_s24le",
                 clean_ref_path
             ]
             proc = await asyncio.create_subprocess_exec(*cmd)
             await proc.communicate()
+            if proc.returncode != 0 or not os.path.isfile(clean_ref_path):
+                raise RuntimeError("Vocal reference extraction failed.")
 
         # Build Multi-Reference Portfolio: Low Register, High Register, Dynamic Belt
         portfolio = {"core_identity": clean_ref_path}

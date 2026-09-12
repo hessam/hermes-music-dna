@@ -9,6 +9,7 @@ import parselmouth
 from parselmouth.praat import call
 from music_dna_agent.src.domain.models import Job, StepName, VocalMeasurements, VocalDNA, VocalIdentity
 from music_dna_agent.src.domain.ports import PipelineStepPort
+from music_dna_agent.src.adapters.pipeline.analysis_export import write_vocal_analysis
 
 
 class VocalDNAAnalyzer(PipelineStepPort):
@@ -26,7 +27,7 @@ class VocalDNAAnalyzer(PipelineStepPort):
             stems_vocal = os.path.join(workspace_dir, "stems", "vocals.wav")
             clean_ref_path = stems_vocal if os.path.exists(stems_vocal) else job.input_file_path
 
-        measurements = self.measure_acoustics(clean_ref_path)
+        measurements, raw_acoustics = self._measure_acoustics(clean_ref_path)
 
         if not job.dna:
             from music_dna_agent.src.domain.models import MusicalDNA
@@ -62,20 +63,18 @@ class VocalDNAAnalyzer(PipelineStepPort):
 
         analysis_dir = os.path.join(workspace_dir, "analysis")
         os.makedirs(analysis_dir, exist_ok=True)
-        vocal_json_path = os.path.join(analysis_dir, "vocal_dna.json")
-
-        with open(vocal_json_path, "w", encoding="utf-8") as f:
-            json.dump(vocal_dna.to_dict(), f, indent=2)
-
-        return vocal_json_path
+        return write_vocal_analysis(job, analysis_dir, raw_acoustics=raw_acoustics)
 
     def measure_acoustics(self, audio_path: str) -> VocalMeasurements:
+        return self._measure_acoustics(audio_path)[0]
+
+    def _measure_acoustics(self, audio_path: str) -> tuple[VocalMeasurements, dict]:
         y, sr = librosa.load(audio_path, sr=22050, duration=45.0)
         hop_length = 256
         dt = hop_length / sr  # exact time step between frames (~11.6 ms)
 
         # 1. Continuous Pitch Tracking (F0) & Voicing Mask
-        f0, voiced_flag, _ = librosa.pyin(y, fmin=65.0, fmax=600.0, sr=sr, hop_length=hop_length)
+        f0, voiced_flag, voiced_probability = librosa.pyin(y, fmin=65.0, fmax=600.0, sr=sr, hop_length=hop_length)
         voiced_indices = np.where(voiced_flag & ~np.isnan(f0))[0]
         voiced_f0 = f0[voiced_indices]
 
@@ -221,10 +220,14 @@ class VocalDNAAnalyzer(PipelineStepPort):
 
         # 5. Phonation Stability via Praat (Jitter, Shimmer & CPP)
         sound = parselmouth.Sound(audio_path)
+        phonation_measured = False
+        cpp_measured = False
         try:
             point_process = call(sound, "To PointProcess (periodic, cc)", 65.0, 600.0)
             local_jitter = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
             local_shimmer = call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
+            phonation_measured = bool(np.isfinite(local_jitter) and np.isfinite(local_shimmer)
+                                     and local_jitter > 0 and local_shimmer > 0)
             jitter_local_pct = float(local_jitter * 100.0) if local_jitter > 0 else 0.8
             shimmer_local_pct = float(local_shimmer * 100.0) if local_shimmer > 0 else 3.5
         except Exception:
@@ -235,8 +238,45 @@ class VocalDNAAnalyzer(PipelineStepPort):
             power_cepstrogram = call(sound, "To PowerCepstrogram", 60.0, 0.002, 5000.0, 50.0)
             cpp = call(power_cepstrogram, "Get peak prominence", 60.0, 333.3, "parabolic", 0.001, 0.05, "exponential", "robust")
             cpp_db = float(cpp)
+            if not np.isfinite(cpp_db):
+                raise ValueError("CPP measurement is not finite.")
+            cpp_measured = True
         except Exception:
             cpp_db = 12.5
+
+        # 5b. Praat Formants (Burg) & Harmonics-to-Noise Ratio (HNR)
+        formants_measured = False
+        hnr_measured = False
+        formants_hz = {}
+        hnr_db = 15.0
+
+        try:
+            harmonicity = call(sound, "To Harmonicity (cc)", 0.01, 65.0, 0.1, 4.5)
+            mean_hnr = call(harmonicity, "Get mean", 0, 0)
+            if np.isfinite(mean_hnr):
+                hnr_db = float(mean_hnr)
+                hnr_measured = True
+        except Exception as exc:
+            logger.warning("Praat HNR measurement failed: %s", exc)
+
+        try:
+            max_formant = 5500.0 if median_f0 > 175.0 else 5000.0
+            formant_obj = call(sound, "To Formant (burg)", 0.01, 5, max_formant, 0.025, 50.0)
+            f1_val = call(formant_obj, "Get mean", 1, 0, 0, "Hertz")
+            f2_val = call(formant_obj, "Get mean", 2, 0, 0, "Hertz")
+            f3_val = call(formant_obj, "Get mean", 3, 0, 0, "Hertz")
+            f4_val = call(formant_obj, "Get mean", 4, 0, 0, "Hertz")
+
+            if all(np.isfinite(val) and val > 0 for val in [f1_val, f2_val, f3_val, f4_val]):
+                formants_hz = {
+                    "f1": float(f1_val),
+                    "f2": float(f2_val),
+                    "f3": float(f3_val),
+                    "f4": float(f4_val),
+                }
+                formants_measured = True
+        except Exception as exc:
+            logger.warning("Praat Formants measurement failed: %s", exc)
 
         # 6. Acoustic Register Classification
         registers = []
@@ -251,7 +291,7 @@ class VocalDNAAnalyzer(PipelineStepPort):
         if not registers:
             registers = ["chest" if median_f0 < 160.0 else "mixed"]
 
-        return VocalMeasurements(
+        measurements = VocalMeasurements(
             f0_distribution=f0_distribution,
             f0_range_semitones=f0_range_semitones,
             vibrato_rate_hz=vibrato_rate_hz,
@@ -265,4 +305,34 @@ class VocalDNAAnalyzer(PipelineStepPort):
             shimmer_local_pct=shimmer_local_pct,
             subharmonic_energy_ratio=subharmonic_energy_ratio,
             detected_registers=registers,
+            formants_hz=formants_hz if formants_measured else None,
+            hnr_db=hnr_db if hnr_measured else None,
         )
+        raw_acoustics = {
+            "audio_path": audio_path,
+            "sample_rate_hz": sr,
+            "hop_length_samples": hop_length,
+            "analyzed_duration_s": len(y) / sr,
+            "f0_method": "librosa.pyin",
+            "f0_search_range_hz": [65.0, 600.0],
+            "frame_times_s": (np.arange(len(f0)) * dt).tolist(),
+            "f0_hz": [float(value) if np.isfinite(value) else None for value in f0],
+            "voiced": voiced_flag.tolist(),
+            "voiced_probability": [float(value) if np.isfinite(value) else None
+                                   for value in voiced_probability],
+            "spectral_centroid_hz": (np.sum(freq_bins[:, None] * stft, axis=0)
+                                     / np.maximum(np.sum(stft, axis=0), 1e-12)).tolist(),
+            "formants_hz": formants_hz if formants_measured else None,
+            "hnr_db": hnr_db if hnr_measured else None,
+            "unavailable_measurements": [m for m, ok in [("formants_hz", formants_measured), ("hnr_db", hnr_measured)] if not ok],
+            "summary_measurement_status": {
+                "f0_distribution": "measured" if len(voiced_f0) > 20 else "legacy_default",
+                "cpp_db": "measured" if cpp_measured else "legacy_default",
+                "jitter_and_shimmer": "measured" if phonation_measured else "legacy_default",
+                "h1_h2_db": "measured" if h1_h2_values else "legacy_default",
+                "subharmonic_energy_ratio": "measured" if subharmonic_ratios else "legacy_default",
+                "formants_hz": "measured" if formants_measured else "unavailable",
+                "hnr_db": "measured" if hnr_measured else "unavailable",
+            },
+        }
+        return measurements, raw_acoustics

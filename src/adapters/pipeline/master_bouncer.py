@@ -113,7 +113,7 @@ class MasterBouncer(PipelineStepPort):
 
         # Populate output manifest
         clean_ref_path = os.path.join(voice_dir, "clean_vocal_reference.wav")
-        manifest = {}
+        manifest = dict(job.output_manifest)
         if os.path.exists(clean_ref_path):
             manifest["clean_vocal_reference"] = clean_ref_path
         if os.path.exists(guide_wav_path):
