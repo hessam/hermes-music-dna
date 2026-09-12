@@ -1,0 +1,70 @@
+{
+  "baseline_revision": "f59066ad19c810b6ab4a3fbe5f308a31a4218a88",
+  "python": "3.13.7",
+  "numpy": "2.5.2",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cases": {
+    "corpus_12_singers": {
+      "pairs": 630,
+      "before": {
+        "median_ms": 17.77662502718158,
+        "peak_traced_bytes": 392788,
+        "repeats": 5
+      },
+      "after": {
+        "median_ms": 13.278291997266933,
+        "peak_traced_bytes": 236194,
+        "repeats": 5
+      },
+      "artifacts_byte_identical": true,
+      "latency_speedup": 1.338773468066566,
+      "peak_allocation_reduction": 1.662988898955943
+    },
+    "corpus_100_singers": {
+      "pairs": 44850,
+      "before": {
+        "median_ms": 877.6417090266477,
+        "peak_traced_bytes": 15867496,
+        "repeats": 5
+      },
+      "after": {
+        "median_ms": 924.8921669786796,
+        "peak_traced_bytes": 892513,
+        "repeats": 5
+      },
+      "artifacts_byte_identical": true,
+      "latency_speedup": 0.9489124682433157,
+      "peak_allocation_reduction": 17.77844804501447
+    },
+    "eer_630_scores_per_class": {
+      "before": {
+        "median_ms": 7.620165997650474,
+        "peak_traced_bytes": 11702,
+        "repeats": 5
+      },
+      "after": {
+        "median_ms": 0.43220800580456853,
+        "peak_traced_bytes": 30546,
+        "repeats": 5
+      },
+      "exact_result_match": true,
+      "latency_speedup": 17.630784009808657,
+      "peak_allocation_reduction": 0.38309434950566357
+    },
+    "eer_1000000_scores_per_class": {
+      "before": {
+        "median_ms": 2165.494334010873,
+        "peak_traced_bytes": 1071568,
+        "repeats": 5
+      },
+      "after": {
+        "median_ms": 138.11441700090654,
+        "peak_traced_bytes": 1066251,
+        "repeats": 5
+      },
+      "exact_result_match": true,
+      "latency_speedup": 15.678988341938693,
+      "peak_allocation_reduction": 1.0049866307276616
+    }
+  }
+}
