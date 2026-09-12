@@ -24,6 +24,7 @@ async def run_process(name: str, cmd: list[str]) -> None:
         logger.info("Starting %s: %s", name, " ".join(cmd))
         env = dict(os.environ)
         env["PYTHONPATH"] = "/workspace/workspace"
+        env["PYTHONUNBUFFERED"] = "1"
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=log_fp,
